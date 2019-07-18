@@ -6,116 +6,211 @@ from __future__ import division
 
 import tensorflow as tf
 import math
+import os
 import numpy as np
 from utils.get_anchors import get_anchors
+
+import tensorflow as tf
+import math
+import os
+import numpy as np
+
+norm_decay = 0.99
+norm_epsilon=1e-3
+
 
 #Used for BN
 _BATCH_NORM_DECAY = 0.997
 _BATCH_NORM_EPSILON = 1e-5
 
-
-def weight_variable(shape, stddev=None, name='weight'):
-    if stddev == None:
-        if len(shape) == 4:
-            stddev = math.sqrt(2. / (shape[0] * shape[1] * shape[2]))
-        else:
-            stddev = math.sqrt(2. / shape[0])
-    else:
-        stddev = 0.1
-    initial = tf.truncated_normal(shape, stddev=stddev)
-    W = tf.Variable(initial, name=name)
-
-    return W
-
-
-def bias_variable(shape, name='bias'):
-    initial = tf.constant(0.1, shape=shape)
-    return tf.Variable(initial)
+# number_params in yolov3.weights:     62001757
+# number_params in our darknet53:      30122592(voc: 20), 62001757(coco: 80)
+# number_params in our yolo model:     51180609
+# number_variables in our yolo model:  346
 
 
 def batch_norm(inputs, is_training):
 
-  return tf.layers.batch_normalization(
-      inputs=inputs, axis=-1,
-      momentum=_BATCH_NORM_DECAY, epsilon=_BATCH_NORM_EPSILON, center=True,
-      scale=True, training=is_training, fused=True)
+  bn_layer = tf.layers.batch_normalization(inputs=inputs,
+                                           momentum=0.99, epsilon=1e-3, center=True,
+                                           scale=True, training=is_training)
+  return tf.nn.leaky_relu(bn_layer, alpha=0.1)
 
-def convolutional(inputs, weight, stride, is_training, length=-1, relu=True, bn=True):
-    net = tf.nn.conv2d(inputs, weight, [1, stride, stride, 1], padding='SAME')
+def convolutional_(inputs, filters_num, kernel_size, stride, is_training, name, use_bias=False, bn=True):
+    net = tf.layers.conv2d(
+        inputs=inputs, filters=filters_num,
+        kernel_size=kernel_size, strides=[stride, stride], kernel_initializer=tf.glorot_uniform_initializer(),
+        padding=('SAME' if stride == 1 else 'VALID'),
+        kernel_regularizer=tf.contrib.layers.l2_regularizer(scale=5e-4), use_bias=use_bias, name=name)
+
+
     if bn:
         net = batch_norm(net, is_training=is_training)
-    else:
-
-        bias =  bias_variable([length], name='bias')
-        net = tf.nn.bias_add(net, bias)
-
-    if relu:
-        net = tf.nn.leaky_relu(net, alpha=0.1)
 
     return net
 
-def residual(inputs, num_featues, is_training):
+
+
+def residual(inputs, num_featues, is_training, conv_index):
 
     shortcut = inputs
-    weight_1 = weight_variable([1, 1, num_featues, num_featues // 2], name='weight_1')
-    net = convolutional(inputs, weight_1, 1, is_training)
-    weight_3 = weight_variable([3, 3, num_featues // 2, num_featues], name='weight_3')
-    net = convolutional(net, weight_3, 1, is_training)
+    net = convolutional_(inputs, num_featues // 2, 1, 1, is_training, name='conv_%d'%conv_index, use_bias=False, bn=True)
+    conv_index += 1
+    net = convolutional_(net, num_featues, 3, 1, is_training, name='conv_%d'%conv_index, use_bias=False, bn=True)
+    conv_index += 1
 
-    return shortcut + net
+    return shortcut + net, conv_index
 
-def darknet53(inputs, is_training):
+def _darknet53(inputs, conv_index, is_training=True, norm_decay=0.99, norm_epsilon=1e-3):
 
-    with tf.name_scope('init'):
-        weight_3_1 = weight_variable([3, 3, 3, 32], name='weight_3_1')
-        net = convolutional(inputs, weight_3_1, 1, is_training)
-
-        weight_3_2 = weight_variable([3, 3, 32, 64], name='weight_3_2')
-        net = convolutional(net, weight_3_2, 2, is_training)
+    with tf.name_scope('init_conv'):
+        net = convolutional_(inputs, 32, 3, 1, is_training, name='conv_%d'%conv_index)
+        conv_index += 1
 
     with tf.name_scope('convs_1'):
+        net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
+        net = convolutional_(net, 64, 3, 2, is_training, name='conv_%d'%conv_index)
+
+        conv_index += 1
+
         for i in range(1):
             with tf.name_scope("conv_%d"%i):
-                net = residual(net, 64, is_training)
-
-        weight_3 = weight_variable([3, 3, 64, 128])
-        net = convolutional(net, weight_3, 2, is_training)
+                net, conv_index = residual(net, 64, is_training, conv_index)
 
     with tf.name_scope('convs_2'):
+        net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
+        net = convolutional_(net, 128, 3, 2, is_training, name='conv_%d'%conv_index)
+        conv_index += 1
         for i in range(2):
             with tf.name_scope('conv_%d'%i):
-                net = residual(net, 128, is_training)
+                net, conv_index = residual(net, 128, is_training, conv_index)
 
-        weight_3 = weight_variable([3, 3, 128, 256])
-        net = convolutional(net, weight_3, 2, is_training)
 
     with tf.name_scope('convs_3'):
+        net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
+        net = convolutional_(net, 256, 3, 2, is_training, name='conv_%d'%conv_index)
+        conv_index += 1
         for i in range(8):
             with tf.name_scope('conv_%d'%i):
-                net = residual(net, 256, is_training)
+                net, conv_index = residual(net, 256, is_training, conv_index)
 
-        route_1 = net
+    route_1 = net
 
-        weight_3 = weight_variable([3, 3, 256, 512])
-        net = convolutional(net, weight_3, 2, is_training)
+
 
     with tf.name_scope('convs_4'):
+        net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
+        net = convolutional_(net, 512, 3, 2, is_training, name='conv_%d'%conv_index)
+        conv_index += 1
         for i in range(8):
             with tf.name_scope('conv_%d'%i):
-                net = residual(net, 512, is_training)
+                net, conv_index = residual(net, 512, is_training, conv_index)
 
-        route_2 = net
-
-
-        weight_3 = weight_variable([3, 3, 512, 1024])
-        net = convolutional(net, weight_3, 2, is_training)
+    route_2 = net
 
     with tf.name_scope('convs_5'):
-        for i in range(2):
-            with tf.name_scope('conv_%d'%i):
-                net = residual(net, 1024, is_training)
+        #weight_3 = weight_variable([3, 3, 512, 1024])
+        #net = convolutional(net, weight_3, 2, is_training)
+        net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
+        net = convolutional_(net, 1024, 3, 2, is_training, name='conv_%d'%conv_index)
+        conv_index += 1
 
-    return route_1, route_2, net
+        for i in range(4):
+            with tf.name_scope('conv_%d'%i):
+                net, conv_index = residual(net, 1024, is_training, conv_index)
+
+    return route_1, route_2, net, conv_index
+
+
+
+def yolov3_body(inputs, num_anchors, num_classes, is_training=True):
+
+    conv_index = 1
+    route_1, route_2, net, conv_index = _darknet53(inputs, conv_index, is_training=is_training, norm_decay=0.99, norm_epsilon=1e-3)
+
+    is_training=True
+    classes = 80
+
+    with tf.name_scope("large_obj_conv"):
+
+        net = convolutional_(net, 512,1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 1024, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 512, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 1024, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 512, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        conv_lobj_branch = convolutional_(net, 1024, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        y1 = convolutional_(conv_lobj_branch, 3*(classes + 5), 1, 1, is_training, name='conv_%d' % conv_index, use_bias=True, bn=False)
+        conv_index += 1
+
+    with tf.name_scope('middle_obj_conv'):
+        with tf.name_scope('up_sample_conv'):
+
+            net = convolutional_(net, 256, 1, 1, is_training, name='conv_%d' % conv_index)
+            conv_index += 1
+            net = tf.image.resize_nearest_neighbor(net, tf.shape(net)[1:3]*2)
+
+        net = tf.concat([net, route_2], axis=-1)
+
+        net = convolutional_(net, 256, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 512, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 256, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 512, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 256, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        conv_mobj_branch = convolutional_(net, 512, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        y2 = convolutional_(conv_mobj_branch, 3 * (classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
+                            use_bias=True, bn=False)
+        conv_index += 1
+
+
+    with tf.name_scope('small_obj_conv'):
+        with tf.name_scope('up_sample_conv'):
+
+            net = convolutional_(net, 128, 1, 1, is_training, name='conv_%d' % conv_index)
+            conv_index += 1
+            net = tf.image.resize_nearest_neighbor(net, tf.shape(net)[1:3]*2)
+
+        net = tf.concat([net, route_1], axis=-1)
+
+        net = convolutional_(net, 128, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 256, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 128, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        net = convolutional_(net, 256, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        net = convolutional_(net, 128, 1, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+        conv_sobj_branch = convolutional_(net, 256, 3, 1, is_training, name='conv_%d' % conv_index)
+        conv_index += 1
+
+        y3 = convolutional_(conv_sobj_branch, 3 * (classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
+                            use_bias=True, bn=False)
+        conv_index += 1
+
+    return y1, y2, y3
+
 
 def yolov3_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     # Convert final layer features to bounding box parameters
@@ -135,7 +230,7 @@ def yolov3_head(feats, anchors, num_classes, input_shape, calc_loss=False):
     feats = tf.reshape(feats, [-1, grid_shape[0], grid_shape[1], num_anchors, num_classes + 5])
 
     # Adjust predictions to each spatial grid point and anchor size.
-    box_xy = tf.nn.sigmoid(feats[..., :2] + grid) / tf.cast(grid_shape[::-1], tf.float32)
+    box_xy = (tf.nn.sigmoid(feats[..., :2]) + grid) / tf.cast(grid_shape[::-1], tf.float32)
     box_wh = tf.exp(feats[..., 2:4]) * tf.cast(anchors_tensor, tf.float32) / tf.cast(input_shape[::-1], tf.float32)
     box_cofidence = tf.nn.sigmoid(feats[..., 4:5])
     box_class_probs = tf.nn.sigmoid(feats[..., 5:])
@@ -144,145 +239,6 @@ def yolov3_head(feats, anchors, num_classes, input_shape, calc_loss=False):
         return grid, feats, box_xy, box_wh
 
     return box_xy, box_wh, box_cofidence, box_class_probs
-
-def decode(conv_output, anchors, stride, classes):
-    '''
-    return tensors of shape [batch_size, output_size, output_size, anchor_per_scale, 5 + num_classes]
-
-    :param conv_output:
-    :param anchors:
-    :param stride:
-    :return:
-    '''
-
-    conv_shape = tf.shape(conv_output)
-    batch_size = conv_shape[0]
-    output_size = conv_shape[1]
-    anchor_per_scale = len(anchors)
-
-    conv_output = tf.reshape(conv_output, (batch_size, output_size, output_size, anchor_per_scale, 5 + classes))
-
-    conv_raw_dxdy = conv_output[:, :, :, :, 0:2]
-    conv_raw_dwdh = conv_output[:, :, :, :, 2:4]
-    conv_raw_conf = conv_output[:, :, :, :, 4:5]
-    conv_raw_prob = conv_output[:, :, :, :, 5:]
-
-
-    y = tf.tile(tf.range(output_size, dtype=tf.int32)[:, tf.newaxis], [1, output_size])
-    x = tf.tile(tf.range(output_size, dtype=tf.int32)[tf.newaxis, :], [output_size, 1])
-
-    xy_grid = tf.concat([x[:, :, tf.newaxis], y[:, :, tf.newaxis]], axis=-1)
-    xy_grid = tf.tile(xy_grid[tf.newaxis, :, :, tf.newaxis, :], [batch_size, 1, 1, anchor_per_scale, 1])
-    xy_grid = tf.cast(xy_grid, tf.float32)
-
-    pred_xy = (tf.sigmoid(conv_raw_dxdy) + xy_grid) * stride
-    pred_wh = (tf.exp(conv_raw_dwdh) * anchors) * stride
-    pred_xywh = tf.concat([pred_xy, pred_wh], axis=-1)
-
-    pred_conf = tf.sigmoid(conv_raw_conf)
-    pred_prob = tf.sigmoid(conv_raw_prob)
-
-    return tf.concat([pred_xywh, pred_conf, pred_prob], axis=-1)
-
-def yolov3_body(inputs, is_training, classes):
-
-    anchors = get_anchors()
-    strides = np.array([8, 16, 32])
-
-
-    with tf.name_scope("darknet53"):
-        route_1, route_2, net = darknet53(inputs, is_training=is_training)
-
-    with tf.name_scope("large_obj"):
-        weight_1_1 = weight_variable([1, 1, 1024, 512], name='weight_1_1')
-        net = convolutional(net, weight_1_1, 1, is_training)
-
-        weight_3_1 = weight_variable([3, 3, 512, 1024], name='weight_3_1')
-        net = convolutional(net, weight_3_1, 1, is_training)
-
-        weight_1_2 = weight_variable([1, 1, 1024, 512], name='weight_1_2')
-        net = convolutional(net, weight_1_2, 1, is_training)
-
-        weight_3_2 = weight_variable([3, 3, 512, 1024], name='weight_3_2')
-        net = convolutional(net, weight_3_2, 1, is_training)
-
-        weight_1_3 = weight_variable([1, 1, 1024, 512], name='weight_1_3')
-        net = convolutional(net, weight_1_3, 1, is_training)
-
-
-        weight_3 = weight_variable([3, 3, 512, 1024], name='weight_3')
-        conv_lobj_branch = convolutional(net, weight_3, 1, is_training)
-
-        weight_1 = weight_variable([1, 1, 1024, 3*(classes + 5)], name='weight_1')
-        y1 = convolutional(conv_lobj_branch, weight_1, 1, is_training, length=3*(classes + 5), relu=False, bn=False)
-
-    with tf.name_scope('middle_obj'):
-        with tf.name_scope('up_sample'):
-            weight_1 = weight_variable([1, 1, 512, 256], name='weight_1')
-            net = convolutional(net, weight_1, 1, is_training)
-            net = tf.image.resize_nearest_neighbor(net, tf.shape(net)[1:3]*2)
-
-        net = tf.concat([net, route_2], axis=-1)
-
-        weight_1_1 = weight_variable([1, 1, 768, 256], name='weight_1_1')
-        net = convolutional(net, weight_1_1, 1, is_training)
-
-        weight_3_1 = weight_variable([3, 3, 256, 512], name='weight_3_1')
-        net = convolutional(net, weight_3_1, 1, is_training)
-
-        weight_1_2 = weight_variable([1, 1, 512, 256], name='weight_1_2')
-        net = convolutional(net, weight_1_2, 1, is_training)
-
-        weight_3_2 = weight_variable([3, 3, 256, 512], name='weight_3_2')
-        net = convolutional(net, weight_3_2, 1, is_training)
-
-        weight_1_3 = weight_variable([1, 1, 512, 256], name='weight_1_3')
-        net = convolutional(net, weight_1_3, 1, is_training)
-
-        weight_3 = weight_variable([3, 3, 256, 512], name='weight_3')
-        conv_mobj_branch = convolutional(net, weight_3, 1, is_training)
-
-        weight_1 = weight_variable([1, 1, 512, 3 * (classes + 5)], name='weight_1')
-        y2 = convolutional(conv_mobj_branch, weight_1, 1, is_training, length=3 * (classes + 5), relu=False,
-                                   bn=False)
-
-    with tf.name_scope('small_obj'):
-        with tf.name_scope('up_sample'):
-            weight_1 = weight_variable([1, 1, 256, 128], name='weight_1')
-            net = convolutional(net, weight_1, 1, is_training)
-            net = tf.image.resize_nearest_neighbor(net, tf.shape(net)[1:3]*2)
-
-        net = tf.concat([net, route_1], axis=-1)
-
-        weight_1_1 = weight_variable([1, 1, 384, 128], name='weight_1_1')
-        net = convolutional(net, weight_1_1, 1, is_training)
-
-        weight_3_1 = weight_variable([3, 3, 128, 256], name='weight_3_1')
-        net = convolutional(net, weight_3_1, 1, is_training)
-
-        weight_1_2 = weight_variable([1, 1, 256, 128], name='weight_1_2')
-        net = convolutional(net, weight_1_2, 1, is_training)
-
-        weight_3_2 = weight_variable([3, 3, 128, 256], name='weight_3_2')
-        net = convolutional(net, weight_3_2, 1, is_training)
-
-        weight_1_3 = weight_variable([1, 1, 256, 128], name='weight_1_3')
-        net = convolutional(net, weight_1_3, 1, is_training)
-
-        weight_3 = weight_variable([3, 3, 128, 256], name='weight_3')
-        conv_sobj_branch = convolutional(net, weight_3, 1, is_training)
-
-        weight_1 = weight_variable([1, 1, 256, 3 * (classes + 5)], name='weight_1')
-        y3 = convolutional(conv_sobj_branch, weight_1, 1, is_training, length=3 * (classes + 5), relu=False,
-                                   bn=False)
-
-    #with tf.name_scope('decode'):
-    #    pred_sbbox = decode(conv_sbbox, anchors[0], strides[0], classes)
-    #    pred_mbbox = decode(conv_mbbox, anchors[1], strides[1], classes)
-    #    pred_lbbox = decode(conv_lbbox, anchors[2], strides[2], classes)
-
-
-    return y1, y2, y3
 
 def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
     '''
@@ -314,10 +270,14 @@ def yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape):
     boxes = tf.concat([box_mins[..., 0:1], box_mins[..., 1:2], box_maxes[..., 0:1], box_maxes[..., 1:2]], axis=-1)
 
     boxes *= tf.concat([image_shape, image_shape], axis=-1)
+
+
     return boxes
+
 
 def yolo_boxes_and_scores(feats, anchors, num_classes, input_shape, image_shape):
     box_xy, box_wh, box_confidence, box_class_probs = yolov3_head(feats, anchors, num_classes, input_shape)
+    #print(box_xy)
     boxes = yolo_correct_boxes(box_xy, box_wh, input_shape, image_shape)
 
     boxes = tf.reshape(boxes, [-1, 4])
@@ -339,7 +299,8 @@ def yolo_eval(yolo_outputs, num_classes, image_shape, max_boxes=30, score_thresh
     :return:
     '''
 
-    anchors = get_anchors()
+    #anchors = get_anchors()
+    anchors = np.array([[10,13], [16,30], [33,23], [30,61], [62,45], [59,119], [116,90], [156,198], [373,326]])
 
     num_layers = len(yolo_outputs)
     anchor_mask = [[6, 7, 8], [3, 4, 5], [0, 1, 2]]
@@ -466,7 +427,7 @@ def yolov3_loss(yolo_outputs, y_true, num_classes, ignore_thresh=.5):
         # Darknet raw box to calculate loss
         raw_true_xy = y_true[l][..., :2] * grid_shapes[l][::-1] - grid  # (batch_size, 13, 13, 3, 2) * (2, ) - (13, 13, 1, 2) => (batch_size, 13, 13, 3, 2)
 
-        raw_true_wh = tf.math.log(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1]) # (batch_size, 13, 13, 3, 2) / (3, 2) * (2, 1) => (batch_size, 13, 13, 3, 2)
+        raw_true_wh = tf.math.log(tf.clip_by_value(y_true[l][..., 2:4] / anchors[anchor_mask[l]] * input_shape[::-1], 1e-9, 1e9)) # (batch_size, 13, 13, 3, 2) / (3, 2) * (2, 1) => (batch_size, 13, 13, 3, 2)
 
         object_mask_bool = tf.cast(object_mask, tf.bool) # Shape = (batch_size, grid_shape, grid_shape, 3, 1)
 
@@ -512,21 +473,42 @@ def yolov3_loss(yolo_outputs, y_true, num_classes, ignore_thresh=.5):
 
 
 if __name__ == '__main__':
-    inputs = tf.constant(0.5, shape=[4, 13, 13, 75])
+    inputs = tf.constant(0.5, shape=[4, 416, 416, 3])
 
-    #a, b, c = yolov3(inputs, is_training=True, classes=20)
+    with tf.variable_scope('yolov3'):
+        a, b, c = yolov3_body(inputs, is_training=True, classes=80)
+    #a = darknet53(inputs, True)
+    anchors = np.array([[1, 2], [3, 4], [5, 6]])
+    #grid, feats, box_xy, box_wh = yolov3_head(a, anchors, 20, (416, 416), True)
+
+    b = tf.global_variables(scope='yolov3')
+    print(tf.global_variables())
+    print(len(tf.global_variables()))
+
+    params = 0
+    for i in range(len(tf.global_variables())):
+
+
+
+        #if 'conv' not in b[i].name.split('/')[-2] and 'batch_normalization' not in b[i].name.split('/')[-2]:
+        print(b[i].name, b[i].shape)
+
+        shape = b[i].shape.as_list()
+        params += np.prod(shape)
+
+    print(params)
 
     #print(a)
     #print(b)
     #print(c)
 
     #grid, feats, box_xy, box_wh = yolov3_head(inputs, anchors, 20, (416, 416), True)
-    yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]), tf.constant(0.5, shape=[4, 52, 52, 75])]
+    #yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]), tf.constant(0.5, shape=[4, 52, 52, 75])]
 
 
 
 
-    y_true = [tf.constant(0.5, shape=[4, 13, 13, 3, 25]), tf.constant(0.5, shape=[4, 26, 26, 3, 25]), tf.constant(0.5, shape=[4, 52, 52, 3, 25])]
+    #y_true = [tf.constant(0.5, shape=[4, 13, 13, 3, 25]), tf.constant(0.5, shape=[4, 26, 26, 3, 25]), tf.constant(0.5, shape=[4, 52, 52, 3, 25])]
 
     #loss = yolov3_loss(yolo_outputs=yolo_outputs, y_true=y_true, num_classes=20)
 
@@ -534,6 +516,12 @@ if __name__ == '__main__':
 
     #print(loss)
 
-    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=20, image_shape=(500, 400), max_boxes=30, score_threshold=.6, iou_threshold=.5)
+    #with tf.Session() as sess:
+        #yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]),
+                        #tf.constant(0.5, shape=[4, 52, 52, 75])]
 
-    print(boxes_.shape)
+        #boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=20, image_shape=(500, 400), max_boxes=30, score_threshold=.6, iou_threshold=.5)
+
+
+
+

@@ -8,51 +8,83 @@ import tensorflow as tf
 import numpy as np
 
 from yolov3 import yolov3_body
-from yolov3 import yolov3_head
 from yolov3 import yolo_eval
+#from yolovv2 import yolo_inference
 from utils.get_anchors import get_anchors
 
+from PIL import Image
 
-def image_preprocess(image, target_size=[416, 416]):
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
-    h, w, _ = image.shape
-    t_h, t_w = target_size
 
-    scale = min(t_h / h, t_w / w)
+def letterbox_resize(img, new_width, new_height, interp=0):
+    '''
+    Letterbox resize. keep the original aspect ratio in the resized image.
+    '''
+    ori_height, ori_width = img.shape[:2]
 
-    n_w, n_h = int(scale * w), int(scale * h)
+    resize_ratio = min(new_width / ori_width, new_height / ori_height)
 
-    image_resized = cv2.resize(image, (n_w, n_h))
+    resize_w = int(resize_ratio * ori_width)
+    resize_h = int(resize_ratio * ori_height)
 
-    image_padded = np.full(shape=[t_h, t_w, 3], fill_value=128.0)
+    img = cv2.resize(img, (resize_w, resize_h), interpolation=interp)
+    image_padded = np.full((new_height, new_width, 3), 128, np.uint8)
 
-    dw, dh = (t_w - n_w) // 2, (t_h - n_h) // 2
+    dw = int((new_width - resize_w) / 2)
+    dh = int((new_height - resize_h) / 2)
 
-    image_padded[dh:n_h + dh, dw:n_w + dw, :] = image_resized
-    image_padded = image_padded / 255.
-    image_padded = np.expand_dims(image_padded, 0)
-    image_padded = tf.constant(image_padded)
-    image_padded = tf.cast(image_padded, tf.float32)
-    return image_padded
+    image_padded[dh: resize_h + dh, dw: resize_w + dw, :] = img
+
+    return image_padded, resize_ratio, dw, dh
 
 def detect_image(image_path):
-    img = cv2.imread(image_path)
-    height, width, _ = img.shape
+    img_ = cv2.imread(image_path)
+    height, width, _ = img_.shape
+    img, resize_ration, dw, dh = letterbox_resize(img_, 416, 416)
 
-    img = image_preprocess(img)
-    yolo_outputs = yolov3_body(inputs=img, is_training=False, classes=20)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = np.asarray(img, np.float32)
+    img = img[np.newaxis, :] / 255.
+
+    input_data = tf.placeholder(tf.float32, [1, 416, 416, 3], name='input_data')
+
+
+    with tf.variable_scope('yolov3'):
+
+        yolo_outputs = yolov3_body(inputs=input_data, num_anchors=3, num_classes=80)
     #anchors = get_anchors()
 
-    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=20, image_shape=(height, width), max_boxes=30, score_threshold=.6, iou_threshold=.5)
+    #with tf.variable_scope('yolov3'):
+
+        #feats = Yolov3(inputs, True, num_classes)
+        #yolo_outputs = yolo_inference(input_data, 3, 80)
+
+
+
+    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=80, image_shape=(height, width), max_boxes=80, score_threshold=.5, iou_threshold=.5)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
-        boxes = sess.run(boxes_)
+
+        saver = tf.train.Saver()
+
+        saver.restore(sess, './data/checkpoints/yolov3.ckpt')
+
+        #ckpt = tf.train.get_checkpoint_state('./data/checkpoints')
+        #if ckpt and ckpt.model_checkpoint_path:
+        #    saver.restore(sess, ckpt.model_checkpoint_path)
+
+        boxes = sess.run(boxes_, feed_dict={input_data: img})
+
+        print(boxes)
+
+        print(len(boxes))
 
         for bbox in boxes:
             print(bbox)
-            image = cv2.rectangle(img, (int(float(bbox[0])), int(float(bbox[1]))), (int(float(bbox[2])), int(float(bbox[3]))), (255, 0, 255), 2)
+            img_ = cv2.rectangle(img_, (int(float(bbox[1])), int(float(bbox[0]))), (int(float(bbox[3])), int(float(bbox[2]))), (255, 0, 255), 2)
 
+        cv2.imwrite('1.png', img_)
 
 if __name__ == '__main__':
-    detect_image(image_path='utils/2008_000289.jpg')
+    #detect_image(image_path='utils/COCO_test2014_000000000069.jpg')
+    detect_image(image_path='utils/2007_001311.jpg')
