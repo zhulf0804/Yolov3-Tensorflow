@@ -15,9 +15,14 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 
 flags.DEFINE_integer('batch_size', 6, 'The number of images in each batch during training.')
-flags.DEFINE_integer('classes', 80, 'The classes number.')
+flags.DEFINE_integer('classes', 20, 'The classes number.')
 flags.DEFINE_integer('max_boxes_num', 80, 'The max number of boxes in one image.')
-flags.DEFINE_string('saved_ckpt_path', './data/checkpoints', 'Path to save training checkpoint.')
+flags.DEFINE_string('restore_ckpt_path', './data/checkpoints', 'Path to save training checkpoint.')
+flags.DEFINE_integer('max_steps', 50000, 'The max training steps.')
+flags.DEFINE_integer('print_steps', 200, 'Used for print training information.')
+flags.DEFINE_integer('saved_steps', 1000, 'Used for saving model.')
+
+flags.DEFINE_string('saved_ckpt_path', './checkpoints', 'Path to save training checkpoint.')
 
 flags.DEFINE_float('initial_lr', 1e-4, 'The initial learning rate.')
 flags.DEFINE_float('end_lr', 1e-6, 'The end learning rate.')
@@ -94,16 +99,16 @@ with tf.Session() as sess:
 
     variables_to_resotre = [v for v in variables if v.name.split('/')[1] not in exclude_vars]
 
-    saver_to_restore = tf.train.Saver(variables)
+    saver_to_restore = tf.train.Saver(variables_to_resotre)
     saver_to_save = tf.train.Saver()
 
     # if os.path.exists(saved_ckpt_path):
-    ckpt = tf.train.get_checkpoint_state(FLAGS.saved_ckpt_path)
+    ckpt = tf.train.get_checkpoint_state(FLAGS.restore_ckpt_path)
     if ckpt and ckpt.model_checkpoint_path:
         saver_to_restore.restore(sess, ckpt.model_checkpoint_path)
         print("Model restored...")
 
-    for i in range(50000 + 1):
+    for i in range(FLAGS.max_steps + 1):
         batch_image, batch_y_true_1, batch_y_true_2, batch_y_true_3 = voc.__next__(batch_size=FLAGS.batch_size, max_boxes_num=FLAGS.max_boxes_num)
 
         feed_dict={
@@ -114,7 +119,7 @@ with tf.Session() as sess:
         }
 
 
-        if i % 100 == 0:
+        if i % FLAGS.print_steps == 0:
 
             print("Step: %d, Loss: %f "%(i, sess.run(loss, feed_dict=feed_dict)))
 
@@ -122,7 +127,7 @@ with tf.Session() as sess:
 
         if not os.path.exists('checkpoints'):
             os.mkdir('checkpoints')
-        if i % 100 == 0:
-            saver_to_save.save(sess, os.path.join('checkpoints', 'yolov3.model'), global_step=i)
+        if i % FLAGS.saved_steps == 0:
+            saver_to_save.save(sess, os.path.join(FLAGS.saved_ckpt_path, 'yolov3.model'), global_step=i)
 
 

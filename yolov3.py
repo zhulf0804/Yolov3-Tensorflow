@@ -15,13 +15,9 @@ import math
 import os
 import numpy as np
 
-norm_decay = 0.99
-norm_epsilon=1e-3
-
-
 #Used for BN
-_BATCH_NORM_DECAY = 0.997
-_BATCH_NORM_EPSILON = 1e-5
+_BATCH_NORM_DECAY = 0.99
+_BATCH_NORM_EPSILON = 1e-3
 
 # number_params in yolov3.weights:     62001757
 # number_params in our darknet53:      30122592(voc: 20), 62001757(coco: 80)
@@ -32,7 +28,7 @@ _BATCH_NORM_EPSILON = 1e-5
 def batch_norm(inputs, is_training):
 
   bn_layer = tf.layers.batch_normalization(inputs=inputs,
-                                           momentum=0.99, epsilon=1e-3, center=True,
+                                           momentum=_BATCH_NORM_DECAY, epsilon=_BATCH_NORM_EPSILON, center=True,
                                            scale=True, training=is_training)
   return tf.nn.leaky_relu(bn_layer, alpha=0.1)
 
@@ -109,8 +105,7 @@ def _darknet53(inputs, conv_index, is_training=True, norm_decay=0.99, norm_epsil
     route_2 = net
 
     with tf.name_scope('convs_5'):
-        #weight_3 = weight_variable([3, 3, 512, 1024])
-        #net = convolutional(net, weight_3, 2, is_training)
+
         net = tf.pad(net, paddings=[[0, 0], [1, 0], [1, 0], [0, 0]], mode='CONSTANT')
         net = convolutional_(net, 1024, 3, 2, is_training, name='conv_%d'%conv_index)
         conv_index += 1
@@ -126,7 +121,7 @@ def _darknet53(inputs, conv_index, is_training=True, norm_decay=0.99, norm_epsil
 def yolov3_body(inputs, num_classes, is_training=True):
 
     conv_index = 1
-    route_1, route_2, net, conv_index = _darknet53(inputs, conv_index, is_training=is_training, norm_decay=0.99, norm_epsilon=1e-3)
+    route_1, route_2, net, conv_index = _darknet53(inputs, conv_index, is_training=is_training, norm_decay=_BATCH_NORM_DECAY, norm_epsilon=_BATCH_NORM_EPSILON)
 
     with tf.name_scope("large_obj_conv"):
 
@@ -466,7 +461,7 @@ def yolov3_loss(yolo_outputs, y_true, num_classes, ignore_thresh=.5):
 
     return loss
 
-def test():
+def ignore_test():
     inputs = tf.constant(0.5, shape=[4, 416, 416, 3])
 
     with tf.variable_scope('yolov3'):
@@ -521,4 +516,4 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    ignore_test()

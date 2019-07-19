@@ -4,9 +4,10 @@ from __future__ import print_function
 from __future__ import division
 
 import numpy as np
+import config
 
 def get_anchors():
-    anchors_path = 'data/anchors.txt'
+    anchors_path = config._anchor_txt
     with open(anchors_path) as f:
         anchors = f.readline()
     anchors = np.array(anchors.split(','), dtype=np.float32)

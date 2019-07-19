@@ -9,24 +9,24 @@ import numpy as np
 import random
 from utils.draw_bbox import draw_bbox_from_boxes
 from utils.get_anchors import get_anchors
+import config
 
 class Dataset(object):
 
     def __init__(self, dataset_type):
         self.data_aug = True if dataset_type == 'train' else False
-        self.train_input_size = 416
-        self.num_classes = 80
-        self.anchor_per_scale = 3
-        self.strides = np.array([8, 16, 32])
+        self.train_input_size = config._input_size
+        self.num_classes = config._num_classes
+        self.anchor_per_scale = config._anchor_per_scale
+        self.strides = np.array(config._strides)
         self.train_output_sizes = self.train_input_size // self.strides
-        self.num_samples = 5716
-        self.max_bbox_per_scale = 150
+        self.num_samples = config._num_samples
         self.anchors = get_anchors()
         self.annotations = self.load_annotations(dataset_type)
         self.batch_count = 0
 
     def load_annotations(self, dataset_type):
-        with open(os.path.join('data', dataset_type+'.txt'), 'r') as f:
+        with open(os.path.join(config._data_txt, dataset_type+'.txt'), 'r') as f:
             lines = f.readlines()
             annotations = [line.strip() for line in lines if len(line.strip().split()[1:]) != 0]
 
@@ -56,7 +56,7 @@ class Dataset(object):
 
         self.batch_count += 1
 
-        y_true = self.process_true_boxesv2(batch_boxes)
+        y_true = self.process_true_boxes(batch_boxes)
 
         return batch_images, y_true[0], y_true[1], y_true[2]
 
@@ -83,21 +83,10 @@ class Dataset(object):
 
     def image_preprocess(self, image, target_size, gt_boxes=None):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
-        #h, w, _ = image.shape
+
         t_h, t_w = target_size
         image_padded, scale, dw, dh = self.letterbox_resize(image, t_w, t_h)
 
-        #scale = min(t_h / h, t_w / w)
-
-        #n_w, n_h = int(scale * w), int(scale * h)
-
-        #image_resized = cv2.resize(image, (n_w, n_h))
-
-        #image_padded = np.full(shape=[t_h, t_w, 3], fill_value=128.0)
-
-        #dw, dh = (t_w - n_w) // 2, (t_h - n_h) // 2
-
-        #image_padded[dh:n_h+dh, dw:n_w+dw, :] = image_resized
         image_padded = image_padded / 255.
 
         if gt_boxes is None:
@@ -213,80 +202,8 @@ class Dataset(object):
         return inter_area / union_area
 
 
-    def preprocess_true_boxes(self, bboxes):
-        label = [np.zeros((self.train_output_sizes[i], self.train_output_sizes[i], self.anchor_per_scale, 5 + self.num_classes)) for i in range(3)]
 
-        bboxes_xywh = [np.zeros((self.max_bbox_per_scale, 4)) for _ in range(3)]
-
-        bbox_count = np.zeros((3, ))
-
-        for bbox in bboxes:
-            bbox_coor = bbox[:4]
-            bbox_class_ind = bbox[4]
-
-            onehot = np.zeros(self.num_classes, dtype=np.float32)
-            onehot[bbox_class_ind] = 1.0
-
-            uniform_distribution = np.full(self.num_classes, 1.0 / self.num_classes)
-            deta = 0.01
-            smooth_onehot = onehot * (1 - deta) + deta * uniform_distribution
-
-            bbox_xywh = np.concatenate([(bbox_coor[2:] + bbox_coor[:2]) * 0.5, bbox_coor[2:] - bbox_coor[:2]], axis=-1)
-            bbox_xywh_scaled = 1.0 * bbox_xywh[np.newaxis, :] / self.strides[:, np.newaxis]
-
-
-            iou = []
-            exist_positive = False
-
-            for i in range(3):
-                anchors_xywh = np.zeros((self.anchor_per_scale, 4))
-                anchors_xywh[:, 0:2] = np.floor(bbox_xywh_scaled[i, 0:2]).astype(np.int32) + 0.5
-
-                anchors_xywh[:, 2:4] = self.anchors[i]
-
-                iou_scale = self.bbox_iou(bbox_xywh_scaled[i][np.newaxis, :], anchors_xywh)
-                print(iou_scale)
-                iou.append(iou_scale)
-                iou_mask = iou_scale > 0.3
-
-                if np.any(iou_mask):
-                    xind, yind = np.floor(bbox_xywh_scaled[i, 0:2]).astype(np.int32)
-                    label[i][yind, xind, iou_mask, :] = 0
-                    label[i][yind, xind, iou_mask, 0:4] = bbox_xywh
-                    label[i][yind, xind, iou_mask, 4:5] = 1.0
-                    label[i][yind, xind, iou_mask, 5:] = smooth_onehot
-
-                    bbox_ind = int(bbox_count[i] % self.max_bbox_per_scale)
-                    bboxes_xywh[i][bbox_ind, :4] = bbox_xywh
-                    bbox_count[i] += 1
-
-                    exist_positive = True
-
-
-            if not exist_positive:
-                best_anchor_ind = np.argmax(np.array(iou).reshape(-1), axis=-1)
-                best_detect = int(best_anchor_ind / self.anchor_per_scale)
-                best_anchor = int(best_anchor_ind % self.anchor_per_scale)
-
-
-                xind, yind = np.floor(bbox_xywh_scaled[best_detect, 0:2]).astype(np.int32)
-
-                label[best_detect][yind, xind, best_anchor, :] = 0
-                label[best_detect][yind, xind, best_anchor, 0:4] = bbox_xywh
-                label[best_detect][yind, xind, best_anchor, 4:5] = 1.0
-                label[best_detect][yind, xind, best_anchor, 5:] = smooth_onehot
-
-                bbox_ind = int(bbox_count[best_detect] % self.max_bbox_per_scale)
-                bboxes_xywh[best_detect][bbox_ind, :4] = bbox_xywh
-                bbox_count[best_detect] += 1
-
-
-        label_sbbox, label_mbbox, label_lbbox = label
-        sbboxes, mbboxes, lbboxes = bboxes_xywh
-        return label_sbbox, label_mbbox, label_lbbox, sbboxes, mbboxes, lbboxes
-
-
-    def process_true_boxesv2(self, true_boxes):
+    def process_true_boxes(self, true_boxes):
 
 
         '''
