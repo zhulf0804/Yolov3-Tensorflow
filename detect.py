@@ -6,10 +6,10 @@ from __future__ import division
 import cv2
 import tensorflow as tf
 import numpy as np
+import os
 
 from yolov3 import yolov3_body
 from yolov3 import yolo_eval
-#from yolovv2 import yolo_inference
 from utils.get_anchors import get_anchors
 
 from PIL import Image
@@ -34,12 +34,12 @@ def letterbox_resize(img, new_width, new_height, interp=0):
 
     image_padded[dh: resize_h + dh, dw: resize_w + dw, :] = img
 
-    return image_padded, resize_ratio, dw, dh
+    return image_padded
 
-def detect_image(image_path):
+def detect_image(image_path, i=1):
     img_ = cv2.imread(image_path)
     height, width, _ = img_.shape
-    img, resize_ration, dw, dh = letterbox_resize(img_, 416, 416)
+    img = letterbox_resize(img_, 416, 416)
 
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     img = np.asarray(img, np.float32)
@@ -50,7 +50,7 @@ def detect_image(image_path):
 
     with tf.variable_scope('yolov3'):
 
-        yolo_outputs = yolov3_body(inputs=input_data, num_anchors=3, num_classes=80)
+        yolo_outputs = yolov3_body(inputs=input_data, num_classes=80, is_training=False)
     #anchors = get_anchors()
 
     #with tf.variable_scope('yolov3'):
@@ -60,18 +60,18 @@ def detect_image(image_path):
 
 
 
-    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=80, image_shape=(height, width), max_boxes=80, score_threshold=.5, iou_threshold=.5)
+    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=80, image_shape=(height, width), max_boxes=80, score_threshold=.6, iou_threshold=.5)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
 
         saver = tf.train.Saver()
 
-        saver.restore(sess, './data/checkpoints/yolov3.ckpt')
+        #saver.restore(sess, './data/checkpoints/yolov3.ckpt')
 
-        #ckpt = tf.train.get_checkpoint_state('./data/checkpoints')
-        #if ckpt and ckpt.model_checkpoint_path:
-        #    saver.restore(sess, ckpt.model_checkpoint_path)
+        ckpt = tf.train.get_checkpoint_state('./checkpoints')
+        if ckpt and ckpt.model_checkpoint_path:
+            saver.restore(sess, ckpt.model_checkpoint_path)
 
         boxes = sess.run(boxes_, feed_dict={input_data: img})
 
@@ -83,7 +83,12 @@ def detect_image(image_path):
             print(bbox)
             img_ = cv2.rectangle(img_, (int(float(bbox[1])), int(float(bbox[0]))), (int(float(bbox[3])), int(float(bbox[2]))), (255, 0, 255), 2)
 
-        cv2.imwrite('1.png', img_)
+        if not os.path.exists('output'):
+            os.mkdir('output')
+
+
+
+        cv2.imwrite('output/%d.png'%i, img_)
 
 if __name__ == '__main__':
     #detect_image(image_path='utils/COCO_test2014_000000000069.jpg')

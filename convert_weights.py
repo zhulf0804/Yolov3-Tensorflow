@@ -20,7 +20,7 @@ with tf.Session() as sess:
 
     with tf.variable_scope('yolov3'):
 
-        feats = yolov3_body(inputs, 3, num_classes)
+        feats = yolov3_body(inputs, num_classes)
     #    feats = yolo_inference(inputs, 3, 80)
 
     saver = tf.train.Saver(var_list=tf.global_variables(scope='yolov3'))

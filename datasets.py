@@ -15,11 +15,11 @@ class Dataset(object):
     def __init__(self, dataset_type):
         self.data_aug = True if dataset_type == 'train' else False
         self.train_input_size = 416
-        self.num_classes = 20
+        self.num_classes = 80
         self.anchor_per_scale = 3
         self.strides = np.array([8, 16, 32])
         self.train_output_sizes = self.train_input_size // self.strides
-        self.num_samples = 5717
+        self.num_samples = 5716
         self.max_bbox_per_scale = 150
         self.anchors = get_anchors()
         self.annotations = self.load_annotations(dataset_type)
@@ -34,7 +34,7 @@ class Dataset(object):
 
             return annotations
 
-    def __next__(self, batch_size, max_boxes_num=20):
+    def __next__(self, batch_size, max_boxes_num=80):
 
         batch_images = np.zeros((batch_size, self.train_input_size, self.train_input_size, 3))
         batch_boxes = np.zeros(shape=[batch_size, max_boxes_num, 5])
@@ -42,7 +42,7 @@ class Dataset(object):
         for i in range(batch_size):
             index = self.batch_count * batch_size + i
             if index > self.num_samples:
-                index -= self.num_samples
+                index %= self.num_samples
 
             annotation = self.annotations[index]
 
@@ -50,7 +50,8 @@ class Dataset(object):
 
             batch_images[i, ...] = image
 
-            batch_boxes[i, 0:len(bboxes), :] = bboxes
+            mmin_num = min(max_boxes_num, len(bboxes))
+            batch_boxes[i, 0:mmin_num, :] = bboxes[0:mmin_num, :]
 
 
         self.batch_count += 1
@@ -59,24 +60,44 @@ class Dataset(object):
 
         return batch_images, y_true[0], y_true[1], y_true[2]
 
+    def letterbox_resize(self, img, new_width, new_height, interp=0):
+        '''
+        Letterbox resize. keep the original aspect ratio in the resized image.
+        '''
+        ori_height, ori_width = img.shape[:2]
 
+        resize_ratio = min(new_width / ori_width, new_height / ori_height)
+
+        resize_w = int(resize_ratio * ori_width)
+        resize_h = int(resize_ratio * ori_height)
+
+        img = cv2.resize(img, (resize_w, resize_h), interpolation=interp)
+        image_padded = np.full((new_height, new_width, 3), 128, np.uint8)
+
+        dw = int((new_width - resize_w) / 2)
+        dh = int((new_height - resize_h) / 2)
+
+        image_padded[dh: resize_h + dh, dw: resize_w + dw, :] = img
+
+        return image_padded, resize_ratio, dw, dh
 
     def image_preprocess(self, image, target_size, gt_boxes=None):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
-        h, w, _ = image.shape
+        #h, w, _ = image.shape
         t_h, t_w = target_size
+        image_padded, scale, dw, dh = self.letterbox_resize(image, t_w, t_h)
 
-        scale = min(t_h / h, t_w / w)
+        #scale = min(t_h / h, t_w / w)
 
-        n_w, n_h = int(scale * w), int(scale * h)
+        #n_w, n_h = int(scale * w), int(scale * h)
 
-        image_resized = cv2.resize(image, (n_w, n_h))
+        #image_resized = cv2.resize(image, (n_w, n_h))
 
-        image_padded = np.full(shape=[t_h, t_w, 3], fill_value=128.0)
+        #image_padded = np.full(shape=[t_h, t_w, 3], fill_value=128.0)
 
-        dw, dh = (t_w - n_w) // 2, (t_h - n_h) // 2
+        #dw, dh = (t_w - n_w) // 2, (t_h - n_h) // 2
 
-        image_padded[dh:n_h+dh, dw:n_w+dw, :] = image_resized
+        #image_padded[dh:n_h+dh, dw:n_w+dw, :] = image_resized
         image_padded = image_padded / 255.
 
         if gt_boxes is None:
@@ -92,7 +113,7 @@ class Dataset(object):
         if random.random() < 0.5:
             _, w, _ = image.shape
 
-            image = image[:, ::-1, :]
+            image = cv2.flip(image, 1)
             bboxes[:, [0, 2]] = w - bboxes[:, [2, 0]]
 
         return image, bboxes
@@ -131,7 +152,7 @@ class Dataset(object):
             max_d_trans = h - max_bbox[3]
 
             tx = random.uniform(-(max_l_trans - 1), (max_r_trans - 1))
-            ty = random.uniform(-(max_l_trans - 1), (max_d_trans - 1))
+            ty = random.uniform(-(max_u_trans - 1), (max_d_trans - 1))
 
             M = np.array([[1, 0, tx], [0, 1, ty]])
             image = cv2.warpAffine(image, M, (w, h))
@@ -267,8 +288,8 @@ class Dataset(object):
 
     def process_true_boxesv2(self, true_boxes):
 
-        '''
 
+        '''
         :param true_boxes: Shape=(batch_size, max_num_boxes, 5)
         :return:
         '''
@@ -283,8 +304,8 @@ class Dataset(object):
         boxes_xy = (true_boxes[..., 0:2] + true_boxes[..., 2:4]) // 2
         boxes_wh = true_boxes[..., 2:4] - true_boxes[..., 0:2]
 
-        true_boxes[..., 0:2] = boxes_wh / input_shape[::-1]
-        true_boxes[..., 2:4] = boxes_xy / input_shape[::-1]
+        true_boxes[..., 0:2] = boxes_xy / input_shape[::-1]   #[0, 1]
+        true_boxes[..., 2:4] = boxes_wh / input_shape[::-1]   #[0, 1]
 
         m = true_boxes.shape[0]
 
@@ -324,8 +345,8 @@ class Dataset(object):
             for t, n in enumerate(best_anchor):
                 for l in range(num_layers):
                     if n in anchor_mask[l]:
-                        i = np.floor(true_boxes[b, t, 0]*grid_shapes[l][1] - 0.00001).astype(np.int32)
-                        j = np.floor(true_boxes[b, t, 1]*grid_shapes[l][0] - 0.00001).astype(np.int32)
+                        i = np.floor(true_boxes[b, t, 0]*grid_shapes[l][1]).astype(np.int32)
+                        j = np.floor(true_boxes[b, t, 1]*grid_shapes[l][0]).astype(np.int32)
 
                         #print(true_boxes[b, t, 0], true_boxes[b, t, 1])
                         k = anchor_mask[l].index(n)

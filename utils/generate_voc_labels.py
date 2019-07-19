@@ -58,12 +58,12 @@ def generate_voc_labels(image_path, xml_path, filenames_list_path, data_type, sa
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--image_path', type=str, default='/Volumes/Samsung_T5/datasets/VOCdevkit/VOCdevkit/VOC2012/JPEGImages', help='the path to the raw images')
-    parser.add_argument('--xml_path', type=str, default='/Volumes/Samsung_T5/datasets/VOCdevkit/VOCdevkit/VOC2012/Annotations', help='the path to the xml files')
+    parser.add_argument('--image_path', type=str, default='/Users/zhulf/data/VOCdevkit/VOC2012/JPEGImages', help='the path to the raw images')
+    parser.add_argument('--xml_path', type=str, default='/Users/zhulf/data/VOCdevkit/VOC2012/Annotations', help='the path to the xml files')
 
-    parser.add_argument('--train_filenames_list_path', type=str, default='/Volumes/Samsung_T5/datasets/VOCdevkit/VOCdevkit/VOC2012/ImageSets/Main/train.txt', help='the path to the train filenames list')
-    parser.add_argument('--val_filenames_list_path', type=str, default='/Volumes/Samsung_T5/datasets/VOCdevkit/VOCdevkit/VOC2012/ImageSets/Main/val.txt', help='the path to the val filenames list')
-    parser.add_argument('--trainval_filenames_list_path', type=str, default='/Volumes/Samsung_T5/datasets/VOCdevkit/VOCdevkit/VOC2012/ImageSets/Main/trainval.txt', help='the path to the trainval filenames list')
+    parser.add_argument('--train_filenames_list_path', type=str, default='/Users/zhulf/data/VOCdevkit/VOC2012/ImageSets/Main/train.txt', help='the path to the train filenames list')
+    parser.add_argument('--val_filenames_list_path', type=str, default='/Users/zhulf/data/VOCdevkit/VOC2012/ImageSets/Main/val.txt', help='the path to the val filenames list')
+    parser.add_argument('--trainval_filenames_list_path', type=str, default='/Users/zhulf/data/VOCdevkit/VOC2012/ImageSets/Main/trainval.txt', help='the path to the trainval filenames list')
 
     parser.add_argument('--saved_path', type=str, default='../data', help='the path to save label files')
 

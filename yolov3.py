@@ -26,7 +26,7 @@ _BATCH_NORM_EPSILON = 1e-5
 # number_params in yolov3.weights:     62001757
 # number_params in our darknet53:      30122592(voc: 20), 62001757(coco: 80)
 # number_params in our yolo model:     51180609
-# number_variables in our yolo model:  346
+# number_variables in our yolo model:  366
 
 
 def batch_norm(inputs, is_training):
@@ -123,13 +123,10 @@ def _darknet53(inputs, conv_index, is_training=True, norm_decay=0.99, norm_epsil
 
 
 
-def yolov3_body(inputs, num_anchors, num_classes, is_training=True):
+def yolov3_body(inputs, num_classes, is_training=True):
 
     conv_index = 1
     route_1, route_2, net, conv_index = _darknet53(inputs, conv_index, is_training=is_training, norm_decay=0.99, norm_epsilon=1e-3)
-
-    is_training=True
-    classes = 80
 
     with tf.name_scope("large_obj_conv"):
 
@@ -151,7 +148,7 @@ def yolov3_body(inputs, num_anchors, num_classes, is_training=True):
         conv_lobj_branch = convolutional_(net, 1024, 3, 1, is_training, name='conv_%d' % conv_index)
         conv_index += 1
 
-        y1 = convolutional_(conv_lobj_branch, 3*(classes + 5), 1, 1, is_training, name='conv_%d' % conv_index, use_bias=True, bn=False)
+        y1 = convolutional_(conv_lobj_branch, 3*(num_classes + 5), 1, 1, is_training, name='conv_%d' % conv_index, use_bias=True, bn=False)
         conv_index += 1
 
     with tf.name_scope('middle_obj_conv'):
@@ -176,7 +173,7 @@ def yolov3_body(inputs, num_anchors, num_classes, is_training=True):
         conv_mobj_branch = convolutional_(net, 512, 3, 1, is_training, name='conv_%d' % conv_index)
         conv_index += 1
 
-        y2 = convolutional_(conv_mobj_branch, 3 * (classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
+        y2 = convolutional_(conv_mobj_branch, 3 * (num_classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
                             use_bias=True, bn=False)
         conv_index += 1
 
@@ -205,7 +202,7 @@ def yolov3_body(inputs, num_anchors, num_classes, is_training=True):
         conv_sobj_branch = convolutional_(net, 256, 3, 1, is_training, name='conv_%d' % conv_index)
         conv_index += 1
 
-        y3 = convolutional_(conv_sobj_branch, 3 * (classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
+        y3 = convolutional_(conv_sobj_branch, 3 * (num_classes + 5), 1, 1, is_training, name='conv_%d' % conv_index,
                             use_bias=True, bn=False)
         conv_index += 1
 
@@ -384,8 +381,6 @@ def box_iou(b1, b2):
 
     return iou
 
-
-
 def yolov3_loss(yolo_outputs, y_true, num_classes, ignore_thresh=.5):
     '''
 
@@ -471,57 +466,59 @@ def yolov3_loss(yolo_outputs, y_true, num_classes, ignore_thresh=.5):
 
     return loss
 
-
-if __name__ == '__main__':
+def test():
     inputs = tf.constant(0.5, shape=[4, 416, 416, 3])
 
     with tf.variable_scope('yolov3'):
-        a, b, c = yolov3_body(inputs, is_training=True, classes=80)
-    #a = darknet53(inputs, True)
+        a, b, c = yolov3_body(inputs, num_classes=80, is_training=True)
+
+    variables = tf.trainable_variables()
+
+    exclude_vars = ['conv_59', 'conv_67', 'conv_75']
+
+    variables_to_resotre = [v for v in variables if v.name.split('/')[1] not in exclude_vars]
+
+    print(len(variables_to_resotre))
+
+    print(len(variables))
+
+    # a = darknet53(inputs, True)
     anchors = np.array([[1, 2], [3, 4], [5, 6]])
-    #grid, feats, box_xy, box_wh = yolov3_head(a, anchors, 20, (416, 416), True)
+    # grid, feats, box_xy, box_wh = yolov3_head(a, anchors, 20, (416, 416), True)
 
-    b = tf.global_variables(scope='yolov3')
-    print(tf.global_variables())
-    print(len(tf.global_variables()))
+    #b = tf.global_variables(scope='yolov3')
+    #print(tf.global_variables())
+    #print(len(tf.global_variables()))
 
-    params = 0
-    for i in range(len(tf.global_variables())):
+    #params = 0
+    #for i in range(len(tf.global_variables())):
+    #    # if 'conv' not in b[i].name.split('/')[-2] and 'batch_normalization' not in b[i].name.split('/')[-2]:
+    #    print(b[i].name, b[i].shape)
 
+    #    shape = b[i].shape.as_list()
+    #    params += np.prod(shape)
 
+    #print(params)
 
-        #if 'conv' not in b[i].name.split('/')[-2] and 'batch_normalization' not in b[i].name.split('/')[-2]:
-        print(b[i].name, b[i].shape)
+    # print(a)
+    # print(b)
+    # print(c)
 
-        shape = b[i].shape.as_list()
-        params += np.prod(shape)
+    # grid, feats, box_xy, box_wh = yolov3_head(inputs, anchors, 20, (416, 416), True)
+    # yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]), tf.constant(0.5, shape=[4, 52, 52, 75])]
 
-    print(params)
+    # y_true = [tf.constant(0.5, shape=[4, 13, 13, 3, 25]), tf.constant(0.5, shape=[4, 26, 26, 3, 25]), tf.constant(0.5, shape=[4, 52, 52, 3, 25])]
 
-    #print(a)
-    #print(b)
-    #print(c)
+    # loss = yolov3_loss(yolo_outputs=yolo_outputs, y_true=y_true, num_classes=20)
 
-    #grid, feats, box_xy, box_wh = yolov3_head(inputs, anchors, 20, (416, 416), True)
-    #yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]), tf.constant(0.5, shape=[4, 52, 52, 75])]
+    # print(loss)
 
+    # with tf.Session() as sess:
+    # yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]),
+    # tf.constant(0.5, shape=[4, 52, 52, 75])]
 
-
-
-    #y_true = [tf.constant(0.5, shape=[4, 13, 13, 3, 25]), tf.constant(0.5, shape=[4, 26, 26, 3, 25]), tf.constant(0.5, shape=[4, 52, 52, 3, 25])]
-
-    #loss = yolov3_loss(yolo_outputs=yolo_outputs, y_true=y_true, num_classes=20)
-
-
-
-    #print(loss)
-
-    #with tf.Session() as sess:
-        #yolo_outputs = [tf.constant(0.5, shape=[4, 13, 13, 75]), tf.constant(0.5, shape=[4, 26, 26, 75]),
-                        #tf.constant(0.5, shape=[4, 52, 52, 75])]
-
-        #boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=20, image_shape=(500, 400), max_boxes=30, score_threshold=.6, iou_threshold=.5)
+    # boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=20, image_shape=(500, 400), max_boxes=30, score_threshold=.6, iou_threshold=.5)
 
 
-
-
+if __name__ == '__main__':
+    test()
