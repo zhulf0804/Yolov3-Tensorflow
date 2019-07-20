@@ -16,24 +16,27 @@ import config
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
+# for model
 flags.DEFINE_integer('batch_size', config._batch_size, 'The number of images in each batch during training.')
 flags.DEFINE_integer('classes', config._num_classes, 'The classes number.')
 flags.DEFINE_integer('max_boxes_num', config._max_boxes, 'The max number of boxes in one image.')
-flags.DEFINE_string('restore_ckpt_path', './data/checkpoints', 'Path to save training checkpoint.')
-flags.DEFINE_integer('max_steps', 50000, 'The max training steps.')
-flags.DEFINE_integer('print_steps', 200, 'Used for print training information.')
-flags.DEFINE_integer('saved_steps', 1000, 'Used for saving model.')
-
-flags.DEFINE_string('saved_ckpt_path', './checkpoints', 'Path to save training checkpoint.')
-flags.DEFINE_string('saved_summary_train_path', './summary/train/', 'Path to save training summary.')
-flags.DEFINE_string('saved_summary_val_path', './summary/val/', 'Path to save test summary.')
+flags.DEFINE_integer('max_steps', config._max_steps, 'The max training steps.')
+flags.DEFINE_integer('print_steps', config._print_steps, 'Used for print training information.')
+flags.DEFINE_integer('saved_steps', config._saved_steps, 'Used for saving model.')
 
 
-flags.DEFINE_float('initial_lr', 1e-4, 'The initial learning rate.')
-flags.DEFINE_float('end_lr', 1e-6, 'The end learning rate.')
-flags.DEFINE_integer('decay_steps', 40000, 'Used for poly learning rate.')
-flags.DEFINE_float('weight_decay', 1e-4, 'The weight decay value for l2 regularization.')
-flags.DEFINE_float('power', 0.9, 'Used for poly learning rate.')
+# for checkpoints and summary
+flags.DEFINE_string('restore_ckpt_path', config._coco_tf_weights, 'Path to save training checkpoint.')
+flags.DEFINE_string('saved_ckpt_path', config._saved_weights, 'Path to save training checkpoint.')
+flags.DEFINE_string('saved_summary_train_path', config._saved_summary_train_path, 'Path to save training summary.')
+flags.DEFINE_string('saved_summary_val_path', config._saved_summary_val_path, 'Path to save test summary.')
+
+# for leaning rate
+flags.DEFINE_float('initial_lr', config._initial_lr, 'The initial learning rate.')
+flags.DEFINE_float('end_lr', config._end_lr, 'The end learning rate.')
+flags.DEFINE_integer('decay_steps', config._decay_steps, 'Used for poly learning rate.')
+flags.DEFINE_float('weight_decay', config._weight_decay, 'The weight decay value for l2 regularization.')
+flags.DEFINE_float('power', config._power, 'Used for poly learning rate.')
 
 def letterbox_resize(img, new_width, new_height, interp=0):
     '''
@@ -152,8 +155,8 @@ with tf.Session() as sess:
         if i * FLAGS.batch_size > voc_train.num_samples * epoches:
             train_loss = sess.run(loss, feed_dict=feed_dict)
             val_loss = sess.run(loss, feed_dict=val_feed_dict)
-
-            print("Epoch %d finished", datetime.datetime.now().strftime("%Y.%m.%d-%H:%M:%S"), " | Step: %d, | train_loss: %f, | val_loss: %f "%(i, train_loss, val_loss))
+            lr_val = sess.run(lr)
+            print("Epoch %d finished, "%epoches , datetime.datetime.now().strftime("%Y.%m.%d-%H:%M:%S"), " | Step: %d, | Lr: %f, | train_loss: %f, | val_loss: %f "%(i, lr_val, train_loss, val_loss))
             epoches += 1
 
         sess.run(train_op, feed_dict=feed_dict)

@@ -18,7 +18,7 @@ from utils.get_anchors import get_anchors
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('image_path', 'utils/2007_001311.jpg', 'Path to save training checkpoint.')
+flags.DEFINE_string('image_path', 'utils/test.jpg', 'Path to save training checkpoint.')
 flags.DEFINE_string('ckpt_path', config._coco_tf_weights, 'Path to save training summary.')
 
 flags.DEFINE_string('names_path', config._coco_names, 'Path to save training summary.')
@@ -123,5 +123,4 @@ def detect_image(image_path, i=1):
         print("prediction file saved in output/%s_pred.png" %basename)
 
 if __name__ == '__main__':
-    #detect_image(image_path='utils/COCO_test2014_000000000069.jpg')
     detect_image(FLAGS.image_path)
