@@ -7,6 +7,8 @@ import cv2
 import tensorflow as tf
 import numpy as np
 import os
+import colorsys
+
 import config
 
 from yolov3 import yolov3_body
@@ -19,13 +21,25 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('image_path', 'utils/2007_001311.jpg', 'Path to save training checkpoint.')
 flags.DEFINE_string('ckpt_path', config._coco_tf_weights, 'Path to save training summary.')
 
+flags.DEFINE_string('names_path', config._coco_names, 'Path to save training summary.')
+flags.DEFINE_integer('num_classes', config._coco_classes, 'The classes number.')
 
 
 
-with open(config._coco_names, 'r') as f:
+with open(FLAGS.names_path, 'r') as f:
     classmap = f.readlines()
 
-colormap = config._coco_colormap
+#colormap = config._coco_colormap
+
+# Generate colors for drawing bounding boxes.
+hsv_tuples = [(x / FLAGS.num_classes, 1., 1.)
+              for x in range(FLAGS.num_classes)]
+colormap = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
+colormap = list(
+    map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), colormap))
+np.random.seed(10101)  # Fixed seed for consistent colors across runs.
+np.random.shuffle(colormap)  # Shuffle colors to decorrelate adjacent classes.
+np.random.seed(None)  # Reset seed to default.
 
 def letterbox_resize(img, new_width, new_height, interp=0):
     '''
@@ -62,10 +76,10 @@ def detect_image(image_path, i=1):
 
     with tf.variable_scope('yolov3'):
 
-        yolo_outputs = yolov3_body(inputs=input_data, num_classes=config._num_classes, is_training=False)
+        yolo_outputs = yolov3_body(inputs=input_data, num_classes=FLAGS.num_classes, is_training=False)
 
 
-    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=config._num_classes, image_shape=(height, width), max_boxes=config._max_boxes, score_threshold=.6, iou_threshold=.5)
+    boxes_, scores_, classes_ = yolo_eval(yolo_outputs, num_classes=FLAGS.num_classes, image_shape=(height, width), max_boxes=config._max_boxes, score_threshold=.6, iou_threshold=.5)
 
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())

@@ -20,7 +20,7 @@ class Dataset(object):
         self.anchor_per_scale = config._anchor_per_scale
         self.strides = np.array(config._strides)
         self.train_output_sizes = self.train_input_size // self.strides
-        self.num_samples = config._num_samples
+        self.num_samples = config._num_train_samples if dataset_type == 'train' else config._num_val_samples
         self.anchors = get_anchors()
         self.annotations = self.load_annotations(dataset_type)
         self.batch_count = 0

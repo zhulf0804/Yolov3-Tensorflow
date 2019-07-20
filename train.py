@@ -7,22 +7,27 @@ import tensorflow as tf
 import os
 import cv2
 import numpy as np
+import datetime
 from yolov3 import yolov3_body
 from yolov3 import yolov3_loss as Loss
 from datasets import Dataset
+import config
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('batch_size', 6, 'The number of images in each batch during training.')
-flags.DEFINE_integer('classes', 20, 'The classes number.')
-flags.DEFINE_integer('max_boxes_num', 80, 'The max number of boxes in one image.')
+flags.DEFINE_integer('batch_size', config._batch_size, 'The number of images in each batch during training.')
+flags.DEFINE_integer('classes', config._num_classes, 'The classes number.')
+flags.DEFINE_integer('max_boxes_num', config._max_boxes, 'The max number of boxes in one image.')
 flags.DEFINE_string('restore_ckpt_path', './data/checkpoints', 'Path to save training checkpoint.')
 flags.DEFINE_integer('max_steps', 50000, 'The max training steps.')
 flags.DEFINE_integer('print_steps', 200, 'Used for print training information.')
 flags.DEFINE_integer('saved_steps', 1000, 'Used for saving model.')
 
 flags.DEFINE_string('saved_ckpt_path', './checkpoints', 'Path to save training checkpoint.')
+flags.DEFINE_string('saved_summary_train_path', './summary/train/', 'Path to save training summary.')
+flags.DEFINE_string('saved_summary_val_path', './summary/val/', 'Path to save test summary.')
+
 
 flags.DEFINE_float('initial_lr', 1e-4, 'The initial learning rate.')
 flags.DEFINE_float('end_lr', 1e-6, 'The end learning rate.')
@@ -66,6 +71,8 @@ variables = tf.contrib.framework.get_variables_to_restore(include=['yolov3'])
 with tf.name_scope('loss'):
     loss = Loss(yolo_outputs=yolo_outputs, y_true=[y_true_1, y_true_2, y_true_3], num_classes=FLAGS.classes)
 
+    tf.summary.scalar('loss', loss)
+
 with tf.name_scope('learning_rate'):
     global_step = tf.Variable(0, trainable=False)
     lr = tf.train.polynomial_decay(
@@ -88,8 +95,10 @@ with tf.name_scope('opt'):
 
         #train_op = tf.train.AdamOptimizer(1e-4).minimize(loss)
 
-voc = Dataset('train')
+voc_train = Dataset('train')
+voc_val = Dataset('val')
 
+merged = tf.summary.merge_all()
 
 with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
@@ -108,8 +117,13 @@ with tf.Session() as sess:
         saver_to_restore.restore(sess, ckpt.model_checkpoint_path)
         print("Model restored...")
 
+    train_summary_writer = tf.summary.FileWriter(FLAGS.saved_summary_train_path, sess.graph)
+    val_summary_writer = tf.summary.FileWriter(FLAGS.saved_summary_val_path, sess.graph)
+
+    epoches = 1
+
     for i in range(FLAGS.max_steps + 1):
-        batch_image, batch_y_true_1, batch_y_true_2, batch_y_true_3 = voc.__next__(batch_size=FLAGS.batch_size, max_boxes_num=FLAGS.max_boxes_num)
+        batch_image, batch_y_true_1, batch_y_true_2, batch_y_true_3 = voc_train.__next__(batch_size=FLAGS.batch_size, max_boxes_num=FLAGS.max_boxes_num)
 
         feed_dict={
             x: batch_image,
@@ -118,16 +132,41 @@ with tf.Session() as sess:
             y_true_3: batch_y_true_3,
         }
 
+        val_batch_image, val_batch_y_true_1, val_batch_y_true_2, val_batch_y_true_3 = voc_val.__next__(batch_size=FLAGS.batch_size,
+                                                                                         max_boxes_num=FLAGS.max_boxes_num)
+
+        val_feed_dict = {
+            x: val_batch_image,
+            y_true_1: val_batch_y_true_1,
+            y_true_2: val_batch_y_true_2,
+            y_true_3: val_batch_y_true_3,
+        }
+
 
         if i % FLAGS.print_steps == 0:
+            train_loss = sess.run(loss, feed_dict=feed_dict)
+            val_loss = sess.run(loss, feed_dict=val_feed_dict)
 
-            print("Step: %d, Loss: %f "%(i, sess.run(loss, feed_dict=feed_dict)))
+            print(datetime.datetime.now().strftime("%Y.%m.%d-%H:%M:%S"), " | Step: %d, | train_loss: %f, | val_loss: %f "%(i, train_loss, val_loss))
+
+        if i * FLAGS.batch_size > voc_train.num_samples * epoches:
+            train_loss = sess.run(loss, feed_dict=feed_dict)
+            val_loss = sess.run(loss, feed_dict=val_feed_dict)
+
+            print("Epoch %d finished", datetime.datetime.now().strftime("%Y.%m.%d-%H:%M:%S"), " | Step: %d, | train_loss: %f, | val_loss: %f "%(i, train_loss, val_loss))
+            epoches += 1
 
         sess.run(train_op, feed_dict=feed_dict)
+
+        if i % FLAGS.print_steps == 0:
+            train_summary = sess.run(merged, feed_dict=feed_dict)
+            train_summary_writer.add_summary(train_summary, i)
+
+
+            val_summary = sess.run(merged, feed_dict=val_feed_dict)
+            val_summary_writer.add_summary(val_summary, i)
 
         if not os.path.exists('checkpoints'):
             os.mkdir('checkpoints')
         if i % FLAGS.saved_steps == 0:
             saver_to_save.save(sess, os.path.join(FLAGS.saved_ckpt_path, 'yolov3.model'), global_step=i)
-
-
